@@ -58,20 +58,26 @@ void IFile::Write(char * pSrcData, uint32_t startIndex, uint32_t size)
 
 IFileSystem::IFileSystem():
 	IFactory<IFile>(131072),
-	m_pVirtualDisk(nullptr),
+	m_pVirtualDiskFile(nullptr),
 	m_pFileAddressAllocator(nullptr),
 	m_pIndexNodeAllocator(nullptr),
+	m_pVirtualDiskImage(nullptr),
+	m_pIndexNodeList(nullptr),
 	mIsVDiskInitialized(false),
 	mLoggedInAccountID(0xffff),
+	mVDiskImageSize(0),
 	mVDiskCapacity(0),
-	mVDiskFreeSpace(0),
-	mVDiskUserFileOffset(0)
+	mVDiskHeaderLength(0)
 {
 }
 
 IFileSystem::~IFileSystem()
 {
 	if (mIsVDiskInitialized)UninstallVirtualDisk();
+	delete m_pFileAddressAllocator;
+	delete m_pIndexNodeAllocator;
+	delete m_pIndexNodeList;
+	delete m_pVirtualDiskImage;
 }
 
 bool IFileSystem::CreateVirtualDisk(NFilePath filePath, NOISE_VIRTUAL_DISK_CAPACITY cap)
@@ -120,7 +126,8 @@ bool IFileSystem::CreateVirtualDisk(NFilePath filePath, NOISE_VIRTUAL_DISK_CAPAC
 	outFile.write((char*)&rootDirIndexNode, sizeof(rootDirIndexNode));
 
 	//i-node table (except the Root i-node 0) and other part can be initialized as 0
-	std::vector<char> emptyBuffer(headerInfo.diskCapacity - sizeof(headerInfo) - sizeof(N_IndexNode), 0);
+	//std::vector<char> emptyBuffer(headerInfo.diskCapacity - sizeof(headerInfo) - sizeof(N_IndexNode), 0);
+	std::vector<char> emptyBuffer(headerInfo.diskCapacity);
 	outFile.write((char*)&emptyBuffer[0], emptyBuffer.size());
 
 	outFile.close();
@@ -130,16 +137,23 @@ bool IFileSystem::CreateVirtualDisk(NFilePath filePath, NOISE_VIRTUAL_DISK_CAPAC
 
 bool IFileSystem::InstallVirtualDisk(NFilePath virtualDiskImagePath)
 {
-	m_pVirtualDisk = new std::fstream(virtualDiskImagePath,std::ios::binary);
-	if (m_pVirtualDisk == nullptr || m_pVirtualDisk->is_open() == false)
+	m_pVirtualDiskFile = new std::fstream(virtualDiskImagePath,std::ios::binary);
+	if (m_pVirtualDiskFile == nullptr || m_pVirtualDiskFile->is_open() == false)
 	{
 		DEBUG_MSG("Install Virtual Disk failure: VDisk open failed !");
 		return false;
 	}
 
+	//load the whole file into memory
+	m_pVirtualDiskFile->seekg(0, std::ios::end);
+	uint32_t fileSize = m_pVirtualDiskFile->tellg();
+	m_pVirtualDiskFile->seekg(0);
+	m_pVirtualDiskImage->resize(fileSize);
+	m_pVirtualDiskFile->read((char*)&m_pVirtualDiskImage->at(0), fileSize);
+
 	//init the header
 	N_VirtualDiskHeaderInfo headerInfo;
-	m_pVirtualDisk->read((char*)&headerInfo, sizeof(headerInfo));
+	mFunction_ReadData(0, headerInfo);
 
 	//magic number
 	if (headerInfo.c_magicNumber != c_FileSystemMagicNumber)
@@ -160,29 +174,39 @@ bool IFileSystem::InstallVirtualDisk(NFilePath virtualDiskImagePath)
 
 	//offset that need to be added to USER-SPACE-ADDRESS when using fstream
 	//(header and i-node table are skipped)
-	mVDiskUserFileOffset = headerInfo.diskHeaderLength;
+	mVDiskHeaderLength = headerInfo.diskHeaderLength;
 
+	if (fileSize != mVDiskHeaderLength + mVDiskCapacity)
+	{
+		//simple error check about the data size
+		DEBUG_MSG("Install Virtual Disk failure: corrupted Virtual disk image!");
+		return false;
+	}
 
 	//init the i-node table
 	uint32_t inodeCount = headerInfo.indexNodeCount;
 	m_pIndexNodeList = new std::vector<N_IndexNode>(inodeCount);
-	m_pVirtualDisk->read((char*)&m_pIndexNodeList->at(0), inodeCount * sizeof(N_IndexNode));
+	for (uint32_t i = 0; i < inodeCount; ++i)
+	{
+		mFunction_ReadData(sizeof(N_VirtualDiskHeaderInfo) + i * sizeof(N_IndexNode), m_pIndexNodeList->at(i));
+	}
+
+	//offset that skips header & i-node table
+	mVDiskHeaderLength = sizeof(N_VirtualDiskHeaderInfo) + inodeCount * sizeof(N_IndexNode);
+
 
 	//init i-node of current working dir with root
-	mCurrentDirIndexNode = m_pIndexNodeList->at(0);
+	m_pCurrentDirIndexNode = &m_pIndexNodeList->at(0);
 
 	//init the ALLOCATOR of ¡¾I-NODE¡¿ and  ¡¾Free User Space¡¿
 	m_pIndexNodeAllocator = new CAllocator(inodeCount);
-	m_pFileAddressAllocator = new CAllocator(mVDiskCapacity - mVDiskUserFileOffset);
+	m_pFileAddressAllocator = new CAllocator(mVDiskCapacity);
 	for (uint32_t i = 0; i < m_pIndexNodeList->size(); ++i)
 	{
 		N_IndexNode& inode =m_pIndexNodeList->at(i);
 		m_pIndexNodeAllocator->Allocate(i, 1);
 		m_pFileAddressAllocator->Allocate(inode.address, inode.size);
 	}
-	
-	//remaining free space
-	mVDiskFreeSpace = m_pFileAddressAllocator->GetFreeSpace();
 
 	mIsVDiskInitialized = true;
 	return true;
@@ -190,7 +214,7 @@ bool IFileSystem::InstallVirtualDisk(NFilePath virtualDiskImagePath)
 
 bool IFileSystem::UninstallVirtualDisk()
 {
-	//close all opened files(in case the user forget to close) (and force them to update data to hard disk)
+	//close all opened files(in case the user forget to close)
 	uint32_t openedFileCount =  IFactory<IFile>::GetObjectCount();
 	for (uint32_t i = 0; i < openedFileCount; ++i)
 	{	
@@ -198,14 +222,21 @@ bool IFileSystem::UninstallVirtualDisk()
 	}
 	IFactory<IFile>::DestroyAllObject();
 
+	//update i-node table
+	uint32_t inodeCount = m_pIndexNodeList->size();
+	for (uint32_t i = 0; i < inodeCount; ++i)
+	{
+		mFunction_WriteData(sizeof(N_VirtualDiskHeaderInfo) + i * sizeof(N_IndexNode), m_pIndexNodeList->at(i));
+	}
 
-	//update i-node table (to HARD DISK)
-	m_pVirtualDisk->seekp(sizeof(N_VirtualDiskHeaderInfo));
-	m_pVirtualDisk->write((char*)&m_pIndexNodeList->at(0), sizeof(N_IndexNode)*m_pIndexNodeList->size());
+	//write the image of VD to hard disk
+	m_pVirtualDiskFile->seekp(0);
+	m_pVirtualDiskFile->write((char*)&m_pVirtualDiskImage->at(0), m_pVirtualDiskImage->size());
 
-	m_pVirtualDisk->close();
-	delete m_pVirtualDisk;
-	m_pVirtualDisk = nullptr;
+	m_pVirtualDiskFile->close();
+	m_pVirtualDiskImage->clear();
+	delete m_pVirtualDiskFile;
+	m_pVirtualDiskFile = nullptr;
 
 	mIsVDiskInitialized = false;
 	return true;
@@ -238,6 +269,107 @@ bool IFileSystem::Login(std::string userName, std::string password)
 	return false;
 }
 
+bool IFileSystem::SetWorkingDir(std::string dir)
+{
+	//decide if a character is delimiter of a path
+	auto isDelim = [](char c) ->bool{return c == '\\' || c == '/'; };
+
+	//analyze directory folders hierarchies
+	std::vector<std::string> intermediateFolders;
+	if (dir.size() == 0) { DEBUG_MSG("SetWorkingDir failure: empty argument."); return false; }
+	if(!isDelim(dir.at(0))){ DEBUG_MSG("SetWorkingDir failure: path must start with \\ or /"); return false; }
+
+	for (int i = 1; i < dir.size();++i)
+	{
+		if (isDelim(dir.at(i)))
+		{
+			intermediateFolders.push_back("");
+		}
+		else
+		{
+			intermediateFolders.back().push_back(dir.at(i));
+		}
+	}
+
+	//delimiter could occur at the back of a string, eliminate it.
+	if (intermediateFolders.back() == "")intermediateFolders.pop_back();
+
+	//iterate from root i-node
+	m_pCurrentDirIndexNode = &m_pIndexNodeList->at(0);
+
+	for (int i = 0; i < intermediateFolders.size(); ++i)
+	{
+		asdasdasdasd;
+	}
+
+	return true;
+}
+
+bool IFileSystem::CreateFolder(std::string folderName)
+{
+	if (folderName.size() > 120)
+	{
+		DEBUG_MSG("FileSystem :Create folder failed. folder name too long (>120)");
+		return false;
+	}
+
+	if (folderName.find('\\', 0) == std::string::npos || folderName.find('/', 0) == std::string::npos)
+	{
+		DEBUG_MSG("FileSystem :Create folder failed. character '\\' and '/' are not permitted.");
+		return false;
+	}
+	
+	//read dir info about
+	uint32_t dirFileOffset = mVDiskHeaderLength + m_pCurrentDirIndexNode->address;
+	uint32_t folderCount = 0,fileCount = 0;
+	std::vector<N_DirFileRecord> subFolderINT(folderCount);//i-node number list
+	std::vector<N_DirFileRecord> subFilesINT(fileCount);//i-node number list
+
+	mFunction_ReadData(dirFileOffset+0, folderCount);
+	mFunction_ReadData(dirFileOffset + 4, fileCount);
+
+	for (uint32_t i = 0; i < folderCount; ++i)
+		mFunction_ReadData(dirFileOffset + 8 + i * sizeof(N_DirFileRecord), subFolderINT.at(i));
+
+	for (uint32_t i = 0; i < fileCount; ++i)
+		mFunction_ReadData(dirFileOffset + 8 +(i+folderCount)  * sizeof(N_DirFileRecord), subFilesINT.at(i));
+
+
+	//resize of current directory file
+	++folderCount;
+	m_pFileAddressAllocator->Release(m_pCurrentDirIndexNode->address, m_pCurrentDirIndexNode->size);
+	m_pCurrentDirIndexNode->size = 8 + (folderCount + fileCount) * sizeof(N_DirFileRecord);
+	uint32_t newAddress = m_pFileAddressAllocator->Allocate(m_pCurrentDirIndexNode->size);
+	m_pCurrentDirIndexNode->address = newAddress;
+
+	//Create dir-file for child folder :
+	//---1, create i-node
+	uint32_t childDirFileINodeNumber = 0;
+	asdasdasd;
+	//---2, allocate space
+	asdasdasd;
+	//---3, init data
+	asdasdasd;
+
+
+
+	//obtain new i-node number , then update resized current dir file
+	subFolderINT.push_back(N_DirFileRecord(folderName, childDirFileINodeNumber));
+
+	mFunction_WriteData(dirFileOffset + 0, folderCount);
+	mFunction_WriteData(dirFileOffset + 4, fileCount);
+
+	for (uint32_t i = 0; i < folderCount; ++i)
+		mFunction_WriteData(dirFileOffset + 8 + i * sizeof(N_DirFileRecord), subFolderINT.at(i));
+
+	for (uint32_t i = 0; i < fileCount; ++i)
+		mFunction_WriteData(dirFileOffset + 8 + (i + folderCount) * sizeof(N_DirFileRecord), subFilesINT.at(i));
+
+
+
+	return true;
+}
+
 uint32_t IFileSystem::GetVDiskCapacity()
 {
 	return mVDiskCapacity;
@@ -245,10 +377,34 @@ uint32_t IFileSystem::GetVDiskCapacity()
 
 uint32_t IFileSystem::GetVDiskUsedSize()
 {
-	return mVDiskCapacity-mVDiskFreeSpace-mVDiskUserFileOffset;
+	return mVDiskCapacity-m_pFileAddressAllocator->GetFreeSpace();
 }
 
 uint32_t IFileSystem::GetVDiskFreeSize()
 {
-	return mVDiskFreeSpace;
+	return m_pFileAddressAllocator->GetFreeSpace();
+}
+
+const uint32_t IFileSystem::GetNameMaxLength()
+{
+	return c_FileAndDirNameMaxLength;
+}
+
+
+/**********************************************
+
+							PRIVATE
+
+************************************************/
+
+template<typename T>
+inline void IFileSystem::mFunction_ReadData(uint32_t srcOffset, T & destData)
+{
+	memcpy_s(&destData,sizeof(T), &m_pVirtualDiskImage->at(srcOffset),sizeof(T));
+}
+
+template<typename T>
+inline void IFileSystem::mFunction_WriteData(uint32_t destOffset, T& srcData)
+{
+	memcpy_s(&m_pVirtualDiskImage->at(srcOffset), sizeof(T), &srcData, sizeof(T));
 }

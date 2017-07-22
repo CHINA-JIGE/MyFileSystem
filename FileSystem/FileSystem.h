@@ -42,11 +42,11 @@ namespace Noise3D
 			std::vector<std::string> dirList;
 		};
 
-		enum NOISE_FILE_TYPE
+		/*enum NOISE_FILE_TYPE
 		{
 			NOISE_FILE_TYPE_DIRECTORY=0,
 			NOISE_FILE_TYPE_USER=1,
-		};
+		};*/
 
 		enum NOISE_FILE_ACCESS_MODE
 		{
@@ -86,28 +86,30 @@ namespace Noise3D
 			//create a virtual disk on hard disk (a binary file)
 			bool CreateVirtualDisk(NFilePath filePath, NOISE_VIRTUAL_DISK_CAPACITY cap);
 
-			//A virtual Disk is actually a big binary file 
+			//load the whole virtual disk IMAGE into memory
 			bool InstallVirtualDisk(NFilePath virtualDiskImagePath);
 
-			//update File system info to hard disk
+			//write the VDisk image back to hard disk
 			bool UninstallVirtualDisk();
 
 
 			bool Login(std::string userName, std::string password);
 
-			void SetWorkingDir(std::string dir);//working dir within the virtual disk
+			bool SetWorkingDir(std::string dir);//working dir within the virtual disk
 
 			void GetWorkingDir(std::string& dir);
 
-			void EnumerateFilesAndDirs(std::string dir, NFileSystemEnumResult& outResult);
+			bool CreateFolder(std::string folderName);
 
-			void EnumerateFilesAndDirsOfWorkingDir(NFileSystemEnumResult& outResult);
+			bool DeleteFolder(std::string folderName);
 
-			bool CreateFile(std::string filePath, UINT byteSize);//a new file under current working directory
+			void EnumerateFilesAndDirs(NFileSystemEnumResult& outResult);
 
-			bool DeleteFile(std::string filePath);//can be done only if the file is CLOSED!!
+			bool CreateFile(std::string fileName, UINT byteSize);//a new file under current working directory
 
-			IFile* OpenFile(std::string filePath);
+			bool DeleteFile(std::string fileName);//can be done only if the file is CLOSED!!
+
+			IFile* OpenFile(std::string fileName);
 
 			bool CloseFile(IFile* pFile);//SAVE and UPDATE data to hard disk
 
@@ -116,6 +118,8 @@ namespace Noise3D
 			uint32_t GetVDiskUsedSize();
 
 			uint32_t GetVDiskFreeSize();//free space left for USER FILE in virtual disk
+
+			const uint32_t GetNameMaxLength();
 
 		private:
 
@@ -129,20 +133,38 @@ namespace Noise3D
 				//i-node table
 			};
 
-			bool				mFunction_CreateFile(std::string filePath, UINT byteSize, NOISE_FILE_TYPE type);
+			//items in an directory file
+			struct N_DirFileRecord
+			{
+				N_DirFileRecord() { for (int i = 0; i < 124; ++i)name[i] = 0; indexNodeId = 0; }
+				N_DirFileRecord(std::string name,uint32_t iNode) { for (int i = 0; i < 124; ++i)name[i] =name.at(i); indexNodeId = iNode; }
+				char name[124];
+				uint32_t indexNodeId;
+			};
 
+			template<typename T>
+			void				mFunction_ReadData(uint32_t srcOffset,T& destData);//read data from VDisk image
+
+			template<typename T>
+			void				mFunction_WriteData(uint32_t destOffset, T& srcData);//write data to VDisk image
+
+			static const uint32_t	c_FileAndDirNameMaxLength = 124;//sizeof(dirFileItem)-sizeof(i-node)=128-4=124
 			static const uint32_t	c_FileSystemMagicNumber = 0x12345678;
 			static const uint32_t	c_FileSystemVersion = 0x20170716;//init will check file system version
-			CAllocator*	m_pIndexNodeAllocator;
-			CAllocator*	m_pFileAddressAllocator;
-			std::fstream*							m_pVirtualDisk;
+			static const uint32_t	c_DirectoryFileItemSize = 128;//124+4
+			std::fstream*							m_pVirtualDiskFile;
+			std::vector<char>*					m_pVirtualDiskImage;//Mapped-virtual disk in lying in memory 
 			std::vector<N_IndexNode>*	m_pIndexNodeList;//i-node list
-			N_IndexNode		mCurrentDirIndexNode;
+			uint32_t				mVDiskImageSize;//the total size of VDisk
+			uint32_t				mVDiskCapacity;//file space capacity
+			uint32_t				mVDiskHeaderLength;	//(header and i-node table are skipped)
+			CAllocator*			m_pIndexNodeAllocator;
+			CAllocator*			m_pFileAddressAllocator;
 			bool						mIsVDiskInitialized;
 			uint16_t				mLoggedInAccountID;
-			uint32_t				mVDiskCapacity;
-			uint32_t				mVDiskUserFileOffset;	//(header and i-node table are skipped)
-			uint32_t				mVDiskFreeSpace;//computed in initialization
+
+			N_IndexNode*		m_pCurrentDirIndexNode;
+
 		};
 
 
@@ -170,5 +192,5 @@ namespace Noise3D
 		};
 
 
-	}
+}
 }
