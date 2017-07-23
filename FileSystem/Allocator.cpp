@@ -169,6 +169,11 @@ bool CAllocator::Release(uint32_t start, uint32_t size)
 	return false;
 }
 
+bool CAllocator::IsAddressSpaceRanOut()
+{
+	return (m_pFreeSegmentList->size()==0);
+}
+
 uint32_t CAllocator::GetFreeSpace()
 {
 	uint32_t fs=0;

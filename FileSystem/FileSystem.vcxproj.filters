@@ -24,10 +24,10 @@
     <ClCompile Include="Allocator.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="unitTest_filesystem.cpp">
+    <ClCompile Include="unitTest_Allocator.cpp">
       <Filter>UnitTest</Filter>
     </ClCompile>
-    <ClCompile Include="unitTest_Allocator.cpp">
+    <ClCompile Include="unitTest_directory.cpp">
       <Filter>UnitTest</Filter>
     </ClCompile>
   </ItemGroup>

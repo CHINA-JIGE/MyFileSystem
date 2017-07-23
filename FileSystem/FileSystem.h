@@ -71,8 +71,11 @@ namespace Noise3D
 			NOISE_FILE_OWNER_GUEST=2
 		};
 
-		//--------------------------------------------
 		class IFile;
+
+		//********************************************************************
+		//********************************************************************
+
 
 		class /*_declspec(dllexport)*/ IFileSystem:
 			public IFactory<IFile>
@@ -97,7 +100,7 @@ namespace Noise3D
 
 			bool SetWorkingDir(std::string dir);//working dir within the virtual disk
 
-			void GetWorkingDir(std::string& dir);
+			std::string GetWorkingDir();
 
 			bool CreateFolder(std::string folderName);
 
@@ -148,6 +151,14 @@ namespace Noise3D
 			template<typename T>
 			void				mFunction_WriteData(uint32_t destOffset, T& srcData);//write data to VDisk image
 
+			void				mFunction_ReadDirectoryFile(uint32_t dirFileAddress,uint32_t& outFolderCount, uint32_t& outFileCount, std::vector<N_DirFileRecord>& outChildFolders, std::vector<N_DirFileRecord>& outChildFiles);
+
+			void				mFunction_WriteDirectoryFile(uint32_t dirFileAddress, uint32_t inFolderCount, uint32_t inFileCount, std::vector<N_DirFileRecord>& inChildFolders, std::vector<N_DirFileRecord>& inChildFiles);
+
+			void				mFunction_DeleteFile(uint32_t dirFileIndexNodeNum);
+
+			void				mFunction_RecursiveFolderDelete(uint32_t dirFileIndexNodeNum);//delete all child-folders and files under this folder including the folder itself
+
 			static const uint32_t	c_FileAndDirNameMaxLength = 124;//sizeof(dirFileItem)-sizeof(i-node)=128-4=124
 			static const uint32_t	c_FileSystemMagicNumber = 0x12345678;
 			static const uint32_t	c_FileSystemVersion = 0x20170716;//init will check file system version
@@ -164,7 +175,7 @@ namespace Noise3D
 			uint16_t				mLoggedInAccountID;
 
 			N_IndexNode*		m_pCurrentDirIndexNode;
-
+			std::string*			m_pCurrentWorkingDir;
 		};
 
 

@@ -39,6 +39,8 @@ namespace Noise3D
 
 			bool			Release(uint32_t start,uint32_t size);//return true if the release is legal(no free address is "released")
 
+			bool			IsAddressSpaceRanOut();
+
 			uint32_t	GetFreeSpace();
 
 			uint32_t	GetTotalSpace();
