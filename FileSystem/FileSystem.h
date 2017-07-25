@@ -28,8 +28,12 @@ namespace Noise3D
 	{
 		struct N_IndexNode
 		{
-			N_IndexNode():ownerUserID(0),accessMode(0),address(0),size(0){}
-			uint16_t ownerUserID;//userID of this file user (system file are owned by ROOT : 1 , i-node that is not in use is owned by NULL:0)
+			N_IndexNode():ownerUserID(0),isFileOpened(0) ,accessMode(0),address(0),size(0){}
+
+			void reset() { ownerUserID = NOISE_FILE_OWNER_NULL; isFileOpened = 0; accessMode = 0; address = 0; size = 0; }
+
+			uint8_t ownerUserID;//userID of this file user (system file are owned by ROOT : 1 , i-node that is not in use is owned by NULL:0)
+			uint8_t	isFileOpened;//false=0,true=1
 			uint16_t accessMode;//flag can be combined by 'OR' operation
 			uint32_t address;
 			uint32_t size;//file byte size
@@ -39,7 +43,7 @@ namespace Noise3D
 		struct NFileSystemEnumResult
 		{
 			std::vector<N_IndexNode> fileList;
-			std::vector<std::string> dirList;
+			std::vector<std::string> folderList;
 		};
 
 		/*enum NOISE_FILE_TYPE
@@ -108,7 +112,7 @@ namespace Noise3D
 
 			void EnumerateFilesAndDirs(NFileSystemEnumResult& outResult);
 
-			bool CreateFile(std::string fileName, UINT byteSize);//a new file under current working directory
+			bool CreateFile(std::string fileName, uint32_t byteSize,NOISE_FILE_ACCESS_MODE acMode);//a new file under current working directory
 
 			bool DeleteFile(std::string fileName);//can be done only if the file is CLOSED!!
 
@@ -151,13 +155,15 @@ namespace Noise3D
 			template<typename T>
 			void				mFunction_WriteData(uint32_t destOffset, T& srcData);//write data to VDisk image
 
+			bool				mFunction_NameValidation(const std::string& name);
+
 			void				mFunction_ReadDirectoryFile(uint32_t dirFileAddress,uint32_t& outFolderCount, uint32_t& outFileCount, std::vector<N_DirFileRecord>& outChildFolders, std::vector<N_DirFileRecord>& outChildFiles);
 
 			void				mFunction_WriteDirectoryFile(uint32_t dirFileAddress, uint32_t inFolderCount, uint32_t inFileCount, std::vector<N_DirFileRecord>& inChildFolders, std::vector<N_DirFileRecord>& inChildFiles);
 
-			void				mFunction_DeleteFile(uint32_t dirFileIndexNodeNum);
+			void				mFunction_ReleaseFileSpace(uint32_t fileIndexNodeNum);
 
-			void				mFunction_RecursiveFolderDelete(uint32_t dirFileIndexNodeNum);//delete all child-folders and files under this folder including the folder itself
+			bool				mFunction_RecursiveFolderDelete(uint32_t dirFileIndexNodeNum);//delete all child-folders and files under this folder including the folder itself
 
 			static const uint32_t	c_FileAndDirNameMaxLength = 124;//sizeof(dirFileItem)-sizeof(i-node)=128-4=124
 			static const uint32_t	c_FileSystemMagicNumber = 0x12345678;
@@ -185,7 +191,7 @@ namespace Noise3D
 
 			UINT	GetFileSize();
 			//read
-			const char*	GetFileData();
+			void Read(char* pOutData,uint32_t startIndex,uint32_t size);
 			//write, but not immediately update to hard disk
 			void Write(char* pSrcData, uint32_t startIndex, uint32_t size);
 
@@ -196,12 +202,10 @@ namespace Noise3D
 			IFile();
 			~IFile();
 
-			bool mIsFileNeedUpdate;//file has been written, data needs to write to hard disk
-			UINT mFileByteSize;
-			char* m_pFileBuffer;//initiated by FileSystem
-
+			bool			mIsFileOpened;//file has been written, data needs to write to hard disk
+			uint32_t	mFileIndexNodeNumber;
+			uint32_t	mFileSize;
+			char*		m_pFileBuffer;
 		};
-
-
-}
+	}
 }

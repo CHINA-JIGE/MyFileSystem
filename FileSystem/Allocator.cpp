@@ -44,7 +44,7 @@ uint32_t CAllocator::Allocate(uint32_t size)
 	}
 
 	//failed to allocated
-	return 0xffffffff;
+	return c_invalid_alloc_address;
 }
 
 bool CAllocator::Allocate(uint32_t start, uint32_t size)

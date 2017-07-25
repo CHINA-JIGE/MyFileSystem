@@ -14,29 +14,44 @@ using namespace Noise3D::Core;
 ****************************************************/
 
 IFile::IFile() :
-	mIsFileNeedUpdate(false)
+	mIsFileOpened(false),
+	mFileIndexNodeNumber(0xffffffff),
+	mFileSize(0),
+	m_pFileBuffer(nullptr)
 {
 
 }
 
 IFile::~IFile()
 {
-	delete m_pFileBuffer;
 }
 
 UINT IFile::GetFileSize()
 {
-	return mFileByteSize;
+	return mFileSize;
 }
 
-const char * IFile::GetFileData()
+void IFile::Read(char* pOutData, uint32_t startIndex, uint32_t size)
 {
-	return m_pFileBuffer;
+	if (!mIsFileOpened)return;
+
+	if (startIndex + size <= mFileSize)
+	{
+		uint32_t remainSize = size - startIndex;
+		//copy 
+		memcpy_s(pOutData, remainSize, m_pFileBuffer + startIndex, remainSize);
+	}
+	else
+	{
+		ERROR_MSG("IFile : 'Read' failure! Index out of boundary!");
+	}
 }
 
 void IFile::Write(char * pSrcData, uint32_t startIndex, uint32_t size)
 {
-	if (startIndex + size <= mFileByteSize)
+	if (!mIsFileOpened)return;
+
+	if (startIndex + size <= mFileSize)
 	{
 		uint32_t remainSize = size - startIndex;
 		//copy 
@@ -351,7 +366,7 @@ bool IFileSystem::CreateFolder(std::string folderName)
 		return false;
 	}
 	
-	if (m_pFileAddressAllocator->IsAddressSpaceRanOut())
+	if (m_pFileAddressAllocator->GetFreeSpace() < sizeof(N_DirFileRecord))
 	{
 		DEBUG_MSG("FileSystem :Create folder failed. the entire address space has been occupied.");
 		return false;
@@ -362,21 +377,6 @@ bool IFileSystem::CreateFolder(std::string folderName)
 		DEBUG_MSG("FileSystem :Create folder failed. No available index-node left for allocation.");
 		return false;
 	}
-
-	//read dir info about
-	uint32_t folderCount = 0,fileCount = 0;
-	std::vector<N_DirFileRecord> subFolderINT;//i-node number list
-	std::vector<N_DirFileRecord> subFilesINT;//i-node number list
-
-	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
-
-
-	//resize of current directory file
-	++folderCount;
-	m_pFileAddressAllocator->Release(m_pCurrentDirIndexNode->address, m_pCurrentDirIndexNode->size);
-	uint32_t newAddress = m_pFileAddressAllocator->Allocate(m_pCurrentDirIndexNode->size);
-	m_pCurrentDirIndexNode->address = newAddress;
-	m_pCurrentDirIndexNode->size = 8 + (folderCount + fileCount) * sizeof(N_DirFileRecord);
 
 
 	//Create dir-file for child folder :
@@ -397,9 +397,28 @@ bool IFileSystem::CreateFolder(std::string folderName)
 	mFunction_WriteData(mVDiskHeaderLength + childDirFileAddr + 0, zeroCount);//folder count
 	mFunction_WriteData(mVDiskHeaderLength + childDirFileAddr + 4, zeroCount);//file count
 
-	//obtain new i-node number , then update resized current dir file
+
+#pragma region MODIFY DIR FILE FOR CREATE CHILD FILES
+
+	//read dir info about
+	uint32_t folderCount = 0, fileCount = 0;
+	std::vector<N_DirFileRecord> subFolderINT;//i-node number list
+	std::vector<N_DirFileRecord> subFilesINT;//i-node number list
+	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
+
+	//resize of current directory file
+	++folderCount;
+	m_pFileAddressAllocator->Release(m_pCurrentDirIndexNode->address, m_pCurrentDirIndexNode->size);
+	uint32_t newSize = 8 + (folderCount + fileCount) * sizeof(N_DirFileRecord);
+	uint32_t newAddress = m_pFileAddressAllocator->Allocate(newSize);
+	m_pCurrentDirIndexNode->address = newAddress;
+	m_pCurrentDirIndexNode->size = newSize;
+
+	//OBTAIN new i-node number !!! UPDATE resized current dir file
 	subFolderINT.push_back(N_DirFileRecord(folderName, childDirFileINodeNum));
 	mFunction_WriteDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
+
+#pragma endregion
 
 	return true;
 }
@@ -428,11 +447,10 @@ bool IFileSystem::DeleteFolder(std::string folderName)
 	//			|-----targetFolder
 	//						|---folders and files need to be recursively removed
 
-	//read dir info about
+	//read dir info
 	uint32_t folderCount = 0, fileCount = 0;
 	std::vector<N_DirFileRecord> subFolderINT;//i-node number list
 	std::vector<N_DirFileRecord> subFilesINT;//i-node number list
-
 	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
 
 	//check if target directory exist 
@@ -446,7 +464,29 @@ bool IFileSystem::DeleteFolder(std::string folderName)
 			isFolderFound = true;
 			//delete item
 			targetIndexNodeNum =	 pIter->indexNodeId;
+
+
+			//delete all child folders and files under target folder (including this folder itself)
+			//(by Releasing i-nodes and address segment)
+			//NOTE: if there is an opened file under target folder, then deletion will fail
+			if (!mFunction_RecursiveFolderDelete(targetIndexNodeNum))
+			{
+				//error message will be given within function 'RecursiveFolderDelete'
+				return false;
+			};
+
+			//resize of CURRENT LEVEL directory file
+			--folderCount;
+			m_pFileAddressAllocator->Release(m_pCurrentDirIndexNode->address, m_pCurrentDirIndexNode->size);
+			uint32_t newAddress = m_pFileAddressAllocator->Allocate(m_pCurrentDirIndexNode->size);
+			m_pCurrentDirIndexNode->address = newAddress;
+			m_pCurrentDirIndexNode->size = 8 + (folderCount + fileCount) * sizeof(N_DirFileRecord);
+
+			//then update resized dir file
 			subFolderINT.erase(pIter);
+			mFunction_WriteDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
+
+
 			break;
 		};
 	}
@@ -457,22 +497,205 @@ bool IFileSystem::DeleteFolder(std::string folderName)
 		return false;
 	}
 
-	//delete all child folders and files under target folder (including this folder itself)
-	//(by Releasing i-nodes and address segment)
-	mFunction_RecursiveFolderDelete(targetIndexNodeNum);
+
+	return true;
+}
+
+void IFileSystem::EnumerateFilesAndDirs(NFileSystemEnumResult & outResult)
+{
+	//read directory file
+	uint32_t folderCount = 0, fileCount = 0;
+	std::vector<N_DirFileRecord> folderList, fileList;
+	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, folderList,fileList);
+
+	//output files and dirs
+	outResult.folderList.reserve(folderCount);
+	outResult.fileList.reserve(fileCount);
+	for (auto& folder : folderList)outResult.folderList.push_back(folder.name);
+	for (auto& file : fileList)
+	{
+		N_IndexNode* pNode = &m_pIndexNodeList->at(file.indexNodeId);
+		//system files (like directory file are hidden from users)
+		if (pNode->ownerUserID != NOISE_FILE_OWNER_ROOT || pNode->ownerUserID != NOISE_FILE_OWNER_NULL)
+		{
+			outResult.fileList.push_back(*pNode);
+		}
+	}
+}
+
+bool IFileSystem::CreateFile(std::string fileName, uint32_t byteSize, NOISE_FILE_ACCESS_MODE acMode)
+{
+	//new file space
+	uint32_t childFileAddr = m_pFileAddressAllocator->Allocate(byteSize);
+	uint32_t childFileINodeNum = m_pIndexNodeAllocator->Allocate(1);
+	if (childFileAddr == c_invalid_alloc_address)
+	{
+		ERROR_MSG("FileSystem :Create File failed.Not Enough space.");
+		return false;
+	}
+
+	if (childFileINodeNum == c_invalid_alloc_address)
+	{
+		ERROR_MSG("FileSystem :Create File failed. Not Enough index nodes.");
+		return false;
+	}
+
+	//new INDEX NODE the file
+	N_IndexNode newFileIndexNode;
+	newFileIndexNode.accessMode = acMode;
+	newFileIndexNode.address = childFileAddr;
+	newFileIndexNode.ownerUserID = mLoggedInAccountID;
+	newFileIndexNode.size = byteSize;
+	m_pIndexNodeList->at(childFileINodeNum) = newFileIndexNode;
+
+
+#pragma region MODIFY DIR FILE FOR CREATE CHILD FILES
+
+	//read dir info about
+	uint32_t folderCount = 0, fileCount = 0;
+	std::vector<N_DirFileRecord> subFolderINT;//i-node number list
+	std::vector<N_DirFileRecord> subFilesINT;//i-node number list
+	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
 
 	//resize of current directory file
-	--folderCount;
+	++fileCount;
 	m_pFileAddressAllocator->Release(m_pCurrentDirIndexNode->address, m_pCurrentDirIndexNode->size);
-	uint32_t newAddress = m_pFileAddressAllocator->Allocate(m_pCurrentDirIndexNode->size);
+	uint32_t newSize = 8 + (folderCount + fileCount) * sizeof(N_DirFileRecord);
+	uint32_t newAddress = m_pFileAddressAllocator->Allocate(newSize);
 	m_pCurrentDirIndexNode->address = newAddress;
-	m_pCurrentDirIndexNode->size = 8 + (folderCount + fileCount) * sizeof(N_DirFileRecord);
+	m_pCurrentDirIndexNode->size = newSize;
 
-	//then update resized dir file
+	//OBTAIN new i-node number !!! UPDATE resized wroking dir's  dir  file
+	subFilesINT.push_back(N_DirFileRecord(fileName, childFileINodeNum));
 	mFunction_WriteDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
+
+#pragma endregion
 
 
 	return true;
+}
+
+bool IFileSystem::DeleteFile(std::string fileName)
+{
+	if (fileName.size() > 120)
+	{
+		DEBUG_MSG("FileSystem :Delete file failed. file not exist. (file name too long)");
+		return false;
+	}
+
+	if (fileName.find('\\', 0) == std::string::npos || fileName.find('/', 0) == std::string::npos)
+	{
+		DEBUG_MSG("FileSystem :Delete file failed. file not exist. Character '\\' and '/' are not permitted in a NAME .");
+		return false;
+	}
+
+	//read dir info about
+	uint32_t folderCount = 0, fileCount = 0;
+	std::vector<N_DirFileRecord> subFolderINT;//i-node number list
+	std::vector<N_DirFileRecord> subFilesINT;//i-node number list
+	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
+
+	//try to find target file
+	bool isFileFound = false;
+	for (auto pIter = subFolderINT.begin(); pIter != subFolderINT.end(); ++pIter)
+	{
+		//match existing child folder
+		if (fileName == pIter->name)
+		{
+			//delete item
+			uint32_t targetIndexNodeNum = pIter->indexNodeId;
+			N_IndexNode* pINode = &m_pIndexNodeList->at(targetIndexNodeNum);
+			if (pINode->isFileOpened)
+			{
+				DEBUG_MSG("FileSystem :Delete file failed. file is OPEN-ED.");
+				return false;
+			}
+
+			mFunction_ReleaseFileSpace(targetIndexNodeNum);
+			subFolderINT.erase(pIter);
+			isFileFound = true;
+			break;
+		};
+	}
+
+	if (!isFileFound)
+	{
+		DEBUG_MSG("FileSystem :Delete file failed. file not found. ");
+		return false;
+	}
+
+
+	//resize of current directory file
+	--fileCount;
+	m_pFileAddressAllocator->Release(m_pCurrentDirIndexNode->address, m_pCurrentDirIndexNode->size);
+	uint32_t newSize = 8 + (folderCount + fileCount) * sizeof(N_DirFileRecord);
+	uint32_t newAddress = m_pFileAddressAllocator->Allocate(newSize);
+	m_pCurrentDirIndexNode->address = newAddress;
+	m_pCurrentDirIndexNode->size = newSize;
+	mFunction_WriteDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
+
+	return true;
+}
+
+IFile * IFileSystem::OpenFile(std::string fileName)
+{
+	if (fileName.size() > 120)
+	{
+		ERROR_MSG("FileSystem :Delete file failed. file not exist. (file name too long)");
+		return false;
+	}
+
+	if (fileName.find('\\', 0) == std::string::npos || fileName.find('/', 0) == std::string::npos)
+	{
+		ERROR_MSG("FileSystem :Delete file failed. file not exist. Character '\\' and '/' are not permitted in a NAME .");
+		return false;
+	}
+
+	//read dir info about
+	uint32_t folderCount = 0, fileCount = 0;
+	std::vector<N_DirFileRecord> subFolderINT;//i-node number list
+	std::vector<N_DirFileRecord> subFilesINT;//i-node number list
+	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
+
+	//try to find target file
+	for (auto pIter = subFolderINT.begin(); pIter != subFolderINT.end(); ++pIter)
+	{
+		//match existing child folder
+		if (fileName == pIter->name)
+		{
+			uint32_t targetIndexNodeNum = pIter->indexNodeId;
+			N_IndexNode* pINode = &m_pIndexNodeList->at(targetIndexNodeNum);
+			if (pINode->isFileOpened)
+			{
+				ERROR_MSG("FileSystem :Open file failed. file is already OPEN-ED.");
+				return false;
+			}
+
+			//create new file interface and init
+			IFile* pNewFile =IFactory<IFile>::CreateObject(fileName);
+			pNewFile->mFileIndexNodeNumber = targetIndexNodeNum;
+			pNewFile->m_pFileBuffer = &m_pVirtualDiskImage->at(mVDiskHeaderLength + pINode->address);
+			pNewFile->mFileSize = pINode->size;
+			pNewFile->mIsFileOpened = true;
+
+			return pNewFile;
+		};
+	}
+
+	ERROR_MSG("FileSystem : Open file failed. file not found. ");
+	return nullptr;
+}
+
+bool IFileSystem::CloseFile(IFile * pFile)
+{
+	pFile->mIsFileOpened = false;
+
+	N_IndexNode* pINode = &m_pIndexNodeList->at(pFile->mFileIndexNodeNumber);
+	pINode->isFileOpened = false;
+
+	IFactory<IFile>::DestroyObject(pFile);
+
+	return false;
 }
 
 uint32_t IFileSystem::GetVDiskCapacity()
@@ -511,7 +734,12 @@ inline void IFileSystem::mFunction_ReadData(uint32_t srcOffset, T & destData)
 template<typename T>
 inline void IFileSystem::mFunction_WriteData(uint32_t destOffset, T& srcData)
 {
-	memcpy_s(&m_pVirtualDiskImage->at(srcOffset), sizeof(T), &srcData, sizeof(T));
+	memcpy_s(&m_pVirtualDiskImage->at(destOffset), sizeof(T), &srcData, sizeof(T));
+}
+
+bool IFileSystem::mFunction_NameValidation(const std::string & name)
+{
+	return false;
 }
 
 void IFileSystem::mFunction_ReadDirectoryFile(uint32_t dirFileAddress, uint32_t & outFolderCount, uint32_t & outFileCount, std::vector<N_DirFileRecord>& outChildFolders, std::vector<N_DirFileRecord>& outChildFiles)
@@ -542,15 +770,16 @@ void IFileSystem::mFunction_WriteDirectoryFile(uint32_t dirFileAddress, uint32_t
 		mFunction_WriteData(mVDiskHeaderLength + dirFileAddress + 8 + (i + inFolderCount) * sizeof(N_DirFileRecord), inChildFiles.at(i));
 }
 
-void IFileSystem::mFunction_DeleteFile(uint32_t dirFileIndexNodeNum)
+void IFileSystem::mFunction_ReleaseFileSpace(uint32_t fileIndexNodeNum)
 {
 	//release file storage and index node
-	N_IndexNode* pFileINode = &m_pIndexNodeList->at(dirFileIndexNodeNum);
+	N_IndexNode* pFileINode = &m_pIndexNodeList->at(fileIndexNodeNum);
 	m_pFileAddressAllocator->Release(pFileINode->address, pFileINode->size);
-	m_pIndexNodeAllocator->Release(dirFileIndexNodeNum, 1);
+	m_pIndexNodeAllocator->Release(fileIndexNodeNum, 1);
+	pFileINode->reset();
 }
 
-void IFileSystem::mFunction_RecursiveFolderDelete(uint32_t dirFileIndexNodeNum)
+bool IFileSystem::mFunction_RecursiveFolderDelete(uint32_t dirFileIndexNodeNum)
 {
 	//desc : delete all child-folders and files under this folder including the folder itself
 
@@ -564,8 +793,17 @@ void IFileSystem::mFunction_RecursiveFolderDelete(uint32_t dirFileIndexNodeNum)
 	//delete files under current directory
 	for (auto& existingChildFiles : subFilesINT)
 	{
-		uint32_t pFileINodeNum = existingChildFiles.indexNodeId;
-		mFunction_DeleteFile(pFileINodeNum);
+		uint32_t fileINodeNum = existingChildFiles.indexNodeId;
+		N_IndexNode* pINode = &m_pIndexNodeList->at(fileINodeNum);
+		//if an opened file is found
+		if (pINode->isFileOpened)
+		{
+			DEBUG_MSG("FileSystem :Delete folder failed. a file under this folder is opened. Deletion procedure terminated.");
+			DEBUG_MSG("FileSystem :Opened file name:" << existingChildFiles.name);
+			return false;
+		}
+
+		mFunction_ReleaseFileSpace(fileINodeNum);
 	}
 
 	for (auto& existingChildFolder : subFolderINT)
@@ -576,9 +814,11 @@ void IFileSystem::mFunction_RecursiveFolderDelete(uint32_t dirFileIndexNodeNum)
 		mFunction_RecursiveFolderDelete(dirFileINodeNum);
 		
 
-		mFunction_DeleteFile(dirFileINodeNum);
+		mFunction_ReleaseFileSpace(dirFileINodeNum);
 	}
 		
-	mFunction_DeleteFile(dirFileIndexNodeNum);
+	mFunction_ReleaseFileSpace(dirFileIndexNodeNum);
+
+	return true;
 }
 

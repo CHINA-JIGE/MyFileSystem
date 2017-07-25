@@ -16,6 +16,8 @@ namespace Noise3D
 {
 	namespace Core
 	{
+		const uint32_t c_invalid_alloc_address = 0xffffffff;
+
 		struct N_AddressRange
 		{
 			N_AddressRange(uint32_t _start, uint32_t _size)

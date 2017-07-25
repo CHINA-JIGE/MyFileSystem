@@ -2,6 +2,9 @@
 
 using namespace Noise3D::Core;
 
+#define TEST_STAGE_CREATE
+
+#ifdef TEST_STAGE_CREATE
 int main()
 {
 	IFileSystem fs;
@@ -9,3 +12,15 @@ int main()
 
 	return 0;
 };
+
+#else
+
+int main()
+{
+	IFileSystem fs;
+	fs.InstallVirtualDisk("666.nvd");
+
+	return 0;
+};
+
+#endif
