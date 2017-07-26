@@ -7,6 +7,9 @@
 			address space given by the user.
 			input an desired size of space, and return a suitable 
 			start index/address in given address space, or fail.
+			Specific resources that the allocator addressed are not required,
+			because this Allocator only cares about ADDRESS, not 
+			certain kinds of resource.
 
 ************************************************************************/
 
@@ -40,6 +43,8 @@ namespace Noise3D
 			bool			Allocate(uint32_t start,uint32_t size);//forcely choose the start address of allocated segment
 
 			bool			Release(uint32_t start,uint32_t size);//return true if the release is legal(no free address is "released")
+
+			void			ReleaseAllSpace();//release all allocated address
 
 			bool			IsAddressSpaceRanOut();
 

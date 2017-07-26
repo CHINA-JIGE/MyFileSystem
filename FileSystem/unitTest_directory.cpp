@@ -2,7 +2,7 @@
 
 using namespace Noise3D::Core;
 
-#define TEST_STAGE_CREATE
+//#define TEST_STAGE_CREATE
 
 #ifdef TEST_STAGE_CREATE
 int main()
@@ -20,6 +20,8 @@ int main()
 	IFileSystem fs;
 	fs.InstallVirtualDisk("666.nvd");
 
+
+	fs.UninstallVirtualDisk();
 	return 0;
 };
 

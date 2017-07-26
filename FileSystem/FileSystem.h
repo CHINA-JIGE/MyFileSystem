@@ -26,6 +26,29 @@ namespace Noise3D
 {
 	namespace Core
 	{
+		enum NOISE_FILE_ACCESS_MODE
+		{
+			NOISE_FILE_ACCESS_MODE_OWNER_READ = 1,
+			NOISE_FILE_ACCESS_MODE_OWNER_WRITE = 2,
+			NOISE_FILE_ACCESS_MODE_OWNER_RW = 3,
+			NOISE_FILE_ACCESS_MODE_OWNER_EXECUTE = 4
+		};
+
+		enum NOISE_VIRTUAL_DISK_CAPACITY
+		{
+			NOISE_VIRTUAL_DISK_CAPACITY_128MB,
+			NOISE_VIRTUAL_DISK_CAPACITY_256MB,
+			NOISE_VIRTUAL_DISK_CAPACITY_512MB,
+			NOISE_VIRTUAL_DISK_CAPACITY_1GB
+		};
+
+		enum NOISE_FILE_OWNER
+		{
+			NOISE_FILE_OWNER_NULL = 0,
+			NOISE_FILE_OWNER_ROOT = 1,
+			NOISE_FILE_OWNER_GUEST = 2
+		};
+
 		struct N_IndexNode
 		{
 			N_IndexNode():ownerUserID(0),isFileOpened(0) ,accessMode(0),address(0),size(0){}
@@ -46,34 +69,6 @@ namespace Noise3D
 			std::vector<std::string> folderList;
 		};
 
-		/*enum NOISE_FILE_TYPE
-		{
-			NOISE_FILE_TYPE_DIRECTORY=0,
-			NOISE_FILE_TYPE_USER=1,
-		};*/
-
-		enum NOISE_FILE_ACCESS_MODE
-		{
-			NOISE_FILE_ACCESS_MODE_OWNER_READ=1,
-			NOISE_FILE_ACCESS_MODE_OWNER_WRITE=2,
-			NOISE_FILE_ACCESS_MODE_OWNER_RW=3,
-			NOISE_FILE_ACCESS_MODE_OWNER_EXECUTE=4
-		};
-
-		enum NOISE_VIRTUAL_DISK_CAPACITY
-		{
-			NOISE_VIRTUAL_DISK_CAPACITY_128MB,
-			NOISE_VIRTUAL_DISK_CAPACITY_256MB,
-			NOISE_VIRTUAL_DISK_CAPACITY_512MB,
-			NOISE_VIRTUAL_DISK_CAPACITY_1GB
-		};
-
-		enum NOISE_FILE_OWNER
-		{
-			NOISE_FILE_OWNER_NULL=0,
-			NOISE_FILE_OWNER_ROOT=1,
-			NOISE_FILE_OWNER_GUEST=2
-		};
 
 		class IFile;
 
@@ -97,7 +92,7 @@ namespace Noise3D
 			bool InstallVirtualDisk(NFilePath virtualDiskImagePath);
 
 			//write the VDisk image back to hard disk
-			bool UninstallVirtualDisk();
+			void UninstallVirtualDisk();
 
 
 			bool Login(std::string userName, std::string password);
@@ -167,7 +162,7 @@ namespace Noise3D
 
 			static const uint32_t	c_FileAndDirNameMaxLength = 124;//sizeof(dirFileItem)-sizeof(i-node)=128-4=124
 			static const uint32_t	c_FileSystemMagicNumber = 0x12345678;
-			static const uint32_t	c_FileSystemVersion = 0x20170716;//init will check file system version
+			static const uint32_t	c_FileSystemVersion = 0x20170727;//init stage check file system version
 			static const uint32_t	c_DirectoryFileItemSize = 128;//124+4
 			std::fstream*							m_pVirtualDiskFile;
 			std::vector<char>*					m_pVirtualDiskImage;//Mapped-virtual disk in lying in memory 
@@ -178,7 +173,7 @@ namespace Noise3D
 			CAllocator*			m_pIndexNodeAllocator;
 			CAllocator*			m_pFileAddressAllocator;
 			bool						mIsVDiskInitialized;
-			uint16_t				mLoggedInAccountID;
+			uint8_t					mLoggedInAccountID;
 
 			N_IndexNode*		m_pCurrentDirIndexNode;
 			std::string*			m_pCurrentWorkingDir;
@@ -197,10 +192,10 @@ namespace Noise3D
 
 		private:
 
-			friend IFactory<IFile>;
-			friend IFileSystem;
 			IFile();
 			~IFile();
+			friend		IFactory<IFile>;
+			friend		IFileSystem;
 
 			bool			mIsFileOpened;//file has been written, data needs to write to hard disk
 			uint32_t	mFileIndexNodeNumber;
