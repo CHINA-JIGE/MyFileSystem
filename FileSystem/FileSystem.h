@@ -62,10 +62,19 @@ namespace Noise3D
 			uint32_t size;//file byte size
 		};
 
-		//result of enumeration of target directory
-		struct NFileSystemEnumResult
+		struct N_FileEnumInfo
 		{
-			std::vector<N_IndexNode> fileList;
+			std::string name;
+			uint8_t ownerUserID;//userID of this file user (system file are owned by ROOT : 1 , i-node that is not in use is owned by NULL:0)
+			uint16_t accessMode;//flag can be combined by 'OR' operation
+			uint32_t address;
+			uint32_t size;//file byte size
+		};
+
+		//result of enumeration of target directory
+		struct N_FileSystemEnumResult
+		{
+			std::vector<N_FileEnumInfo> fileList;
 			std::vector<std::string> folderList;
 		};
 
@@ -105,7 +114,7 @@ namespace Noise3D
 
 			bool DeleteFolder(std::string folderName);
 
-			void EnumerateFilesAndDirs(NFileSystemEnumResult& outResult);
+			void EnumerateFilesAndDirs(N_FileSystemEnumResult& outResult);
 
 			bool CreateFile(std::string fileName, uint32_t byteSize,NOISE_FILE_ACCESS_MODE acMode);//a new file under current working directory
 
@@ -139,7 +148,7 @@ namespace Noise3D
 			struct N_DirFileRecord
 			{
 				N_DirFileRecord() { for (int i = 0; i < 124; ++i)name[i] = 0; indexNodeId = 0; }
-				N_DirFileRecord(std::string name,uint32_t iNode) { for (int i = 0; i < 124; ++i)name[i] =name.at(i); indexNodeId = iNode; }
+				N_DirFileRecord(std::string _name, uint32_t iNode) { for (int i = 0; i < 124; ++i)name[i] = 0; for (int i = 0; i < int(_name.size()); ++i)name[i] = _name.at(i); indexNodeId = iNode; }
 				char name[124];
 				uint32_t indexNodeId;
 			};
@@ -160,7 +169,7 @@ namespace Noise3D
 
 			bool				mFunction_RecursiveFolderDelete(uint32_t dirFileIndexNodeNum);//delete all child-folders and files under this folder including the folder itself
 
-			static const uint32_t	c_FileAndDirNameMaxLength = 124;//sizeof(dirFileItem)-sizeof(i-node)=128-4=124
+			static const uint32_t	c_FileAndDirNameMaxLength = 120;//sizeof(dirFileItem)-sizeof(i-node)=128-4=124, but for safety, round it to 120
 			static const uint32_t	c_FileSystemMagicNumber = 0x12345678;
 			static const uint32_t	c_FileSystemVersion = 0x20170727;//init stage check file system version
 			static const uint32_t	c_DirectoryFileItemSize = 128;//124+4
@@ -198,6 +207,8 @@ namespace Noise3D
 			friend		IFileSystem;
 
 			bool			mIsFileOpened;//file has been written, data needs to write to hard disk
+			bool			mAccessMode_Read;
+			bool			mAccessMode_Write;
 			uint32_t	mFileIndexNodeNumber;
 			uint32_t	mFileSize;
 			char*		m_pFileBuffer;

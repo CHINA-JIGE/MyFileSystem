@@ -2,7 +2,7 @@
 
 using namespace Noise3D::Core;
 
-/*int main()
+int main()
 {
 	CAllocator a(10000);
 
@@ -34,9 +34,9 @@ using namespace Noise3D::Core;
 	uint32_t addr3 = a.Allocate(6000);//failed
 
 	return 0;
-};*/
+};
 
-int main()
+/*int main()
 {
 	CAllocator a(100);
 
@@ -72,4 +72,4 @@ int main()
 	uint32_t addr3 = a.Allocate(1);//failed
 
 	return 0;
-};
+};*/

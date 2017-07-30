@@ -15,6 +15,8 @@ using namespace Noise3D::Core;
 
 IFile::IFile() :
 	mIsFileOpened(false),
+	mAccessMode_Read(false),
+	mAccessMode_Write(false),
 	mFileIndexNodeNumber(0xffffffff),
 	mFileSize(0),
 	m_pFileBuffer(nullptr)
@@ -33,7 +35,17 @@ UINT IFile::GetFileSize()
 
 void IFile::Read(char* pOutData, uint32_t startIndex, uint32_t size)
 {
-	if (!mIsFileOpened)return;
+	if (!mAccessMode_Read)
+	{
+		ERROR_MSG("IFile : 'Read' failure! No Authorization to read!");
+		return;
+	}//not allow to 
+
+	if (!mIsFileOpened)
+	{
+		ERROR_MSG("IFile : 'Read' failure! File is not opened!");
+		return;
+	}
 
 	if (startIndex + size <= mFileSize)
 	{
@@ -49,7 +61,17 @@ void IFile::Read(char* pOutData, uint32_t startIndex, uint32_t size)
 
 void IFile::Write(char * pSrcData, uint32_t startIndex, uint32_t size)
 {
-	if (!mIsFileOpened)return;
+	if (!mAccessMode_Read)
+	{
+		ERROR_MSG("IFile : 'Write' failure! No Authorization to write!");
+		return;
+	}//not allow to 
+
+	if (!mIsFileOpened)
+	{
+		ERROR_MSG("IFile : 'Write' failure! File is not opened!");
+		return;
+	}
 
 	if (startIndex + size <= mFileSize)
 	{
@@ -91,7 +113,7 @@ IFileSystem::IFileSystem() :
 IFileSystem::~IFileSystem()
 {
 #define deletePtr(ptr) if(ptr!=nullptr)delete ptr;
-	if (mIsVDiskInitialized)UninstallVirtualDisk();
+	//if (mIsVDiskInitialized)UninstallVirtualDisk();
 	deletePtr(m_pFileAddressAllocator);
 	deletePtr(m_pIndexNodeAllocator);
 	deletePtr(m_pIndexNodeList);
@@ -101,6 +123,9 @@ IFileSystem::~IFileSystem()
 
 bool IFileSystem::CreateVirtualDisk(NFilePath filePath, NOISE_VIRTUAL_DISK_CAPACITY cap)
 {
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Creating Virtual Disk.....");
+
 	std::ofstream outFile(filePath.c_str(),std::ios::binary);
 	if (!outFile.is_open())
 	{
@@ -157,6 +182,9 @@ bool IFileSystem::CreateVirtualDisk(NFilePath filePath, NOISE_VIRTUAL_DISK_CAPAC
 
 bool IFileSystem::InstallVirtualDisk(NFilePath virtualDiskImagePath)
 {
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Installing Virtual Disk....");
+
 	if (mIsVDiskInitialized)
 	{
 		ERROR_MSG("Install Virtual Disk failure: virtual disk is already installed !!");
@@ -172,7 +200,7 @@ bool IFileSystem::InstallVirtualDisk(NFilePath virtualDiskImagePath)
 
 	//load the whole file into memory
 	m_pVirtualDiskFile->seekg(0, std::ios::end);
-	uint32_t fileSize = m_pVirtualDiskFile->tellg();
+	uint32_t fileSize = uint32_t(m_pVirtualDiskFile->tellg());
 	if (fileSize<20)
 	{
 		ERROR_MSG("Install Virtual Disk failure: corrupted Virtual disk image!");
@@ -249,6 +277,9 @@ bool IFileSystem::InstallVirtualDisk(NFilePath virtualDiskImagePath)
 
 void IFileSystem::UninstallVirtualDisk()
 {
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Un-installing Virtual Disk....");
+
 	if (!mIsVDiskInitialized)
 	{
 		ERROR_MSG("Install Virtual Disk failure: virtual disk was not installed !!");
@@ -287,6 +318,9 @@ void IFileSystem::UninstallVirtualDisk()
 
 bool IFileSystem::Login(std::string userName, std::string password)
 {
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Logging in....");
+
 	//preset account info are defined here (ACCOUNT system should be independent from FILE system)
 	typedef  std::pair<std::string, std::string> LoginInfo;
 	static const int presetAccountCount = 3;
@@ -303,27 +337,30 @@ bool IFileSystem::Login(std::string userName, std::string password)
 		if (userName == presetAccounts[i].first && password == presetAccounts[i].second)
 		{
 			mLoggedInAccountID = i;//save the logged in user ID for access protection
-			DEBUG_MSG("Login Succeeded! User:" + presetAccounts[i].first);
+			DEBUG_MSG("IFileSystem: Login Succeeded! User:" + presetAccounts[i].first);
 			return true;
 		}
 	}
 
-	ERROR_MSG("Login Failed! Illegal account information!");
+	ERROR_MSG("IFileSystem: Login Failed! Illegal account information!");
 	return false;
 }
 
 bool IFileSystem::SetWorkingDir(std::string dir)
 {
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Setting working directory to:" + dir);
+
 	//decide if a character is delimiter of a path
 	auto isDelim = [](char c) ->bool{return c == '\\' || c == '/'; };
 
 	//analyze directory folders hierarchies
 	std::vector<std::string> intermediateFolders;
-	if (dir.size() == 0) { ERROR_MSG("SetWorkingDir failure: empty argument."); return false; }
-	if(!isDelim(dir.at(0))){ ERROR_MSG("SetWorkingDir failure: path must start with \\ or /"); return false; }
+	if (dir.size() == 0) { ERROR_MSG("IFileSystem: SetWorkingDir failure: empty argument."); return false; }
+	if(!isDelim(dir.at(0))){ ERROR_MSG("IFileSystem: SetWorkingDir failure: path must start with \\ or /"); return false; }
 
 	//split path into folder name with delimiter
-	for (uint32_t i = 1; i < dir.size();++i)
+	for (uint32_t i = 0; i < dir.size();++i)
 	{
 		if (isDelim(dir.at(i)))
 		{
@@ -357,17 +394,21 @@ bool IFileSystem::SetWorkingDir(std::string dir)
 			if (folderName == existingFolder.name)
 			{
 				m_pCurrentDirIndexNode = &m_pIndexNodeList->at(existingFolder.indexNodeId);
-				break;
+				goto nextLevel;
 			};
 		}
 
 		//loop-ed through folder names of current level, no match
 		m_pCurrentDirIndexNode = pOriginIndexNode;//restore former i-node
-		ERROR_MSG("SetWorkingDirectory: No such directory .");
+		ERROR_MSG("IFileSystem: SetWorkingDir failure: No such directory .");
 		return false;
+
+	nextLevel:;
 	}
 
 	//SUCCEED
+	*m_pCurrentWorkingDir = dir;
+	if (m_pCurrentWorkingDir->back() != '/')m_pCurrentWorkingDir->push_back('/');
 	return true;
 }
 
@@ -378,28 +419,41 @@ std::string IFileSystem::GetWorkingDir()
 
 bool IFileSystem::CreateFolder(std::string folderName)
 {
-	if (folderName.size() > 120)
-	{
-		DEBUG_MSG("FileSystem :Create folder failed. folder name too long (>120)");
-		return false;
-	}
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Creating Folder:" + *m_pCurrentWorkingDir + folderName);
 
-	if (folderName.find('\\', 0) == std::string::npos || folderName.find('/', 0) == std::string::npos)
+	if (!mFunction_NameValidation(folderName))
 	{
-		DEBUG_MSG("FileSystem :Create folder failed. character '\\' and '/' are not permitted in a NAME .");
+		ERROR_MSG("FileSystem :Create folder failed.");
 		return false;
 	}
 	
 	if (m_pFileAddressAllocator->GetFreeSpace() < sizeof(N_DirFileRecord))
 	{
-		DEBUG_MSG("FileSystem :Create folder failed. the entire address space has been occupied.");
+		ERROR_MSG("FileSystem :Create folder failed. the entire address space has been occupied.");
 		return false;
 	}
 		
 	if (m_pIndexNodeAllocator->IsAddressSpaceRanOut())
 	{
-		DEBUG_MSG("FileSystem :Create folder failed. No available index-node left for allocation.");
+		ERROR_MSG("FileSystem :Create folder failed. No available index-node left for allocation.");
 		return false;
+	}
+
+	//read dir info about
+	uint32_t folderCount = 0, fileCount = 0;
+	std::vector<N_DirFileRecord> subFolderINT;//i-node number list
+	std::vector<N_DirFileRecord> subFilesINT;//i-node number list
+	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
+
+	//CHECK repetition
+	for (auto& folder : subFolderINT)
+	{
+		if (folder.name == folderName)
+		{
+			ERROR_MSG("FileSystem :Create folder failed. Folder already exist.");
+			return false;
+		}
 	}
 
 
@@ -413,7 +467,7 @@ bool IFileSystem::CreateFolder(std::string folderName)
 	N_IndexNode inode = m_pIndexNodeList->at(childDirFileINodeNum);
 	inode.accessMode = NOISE_FILE_ACCESS_MODE_OWNER_RW;
 	inode.address = childDirFileAddr;
-	inode.size = 2 * sizeof(uint32_t);//refer to the doc
+	inode.size = 2 * sizeof(uint32_t);//2 counts
 	inode.ownerUserID = NOISE_FILE_OWNER_ROOT;
 	m_pIndexNodeList->at(childDirFileINodeNum) = inode;//assign value to allocated i-node
 
@@ -423,12 +477,6 @@ bool IFileSystem::CreateFolder(std::string folderName)
 
 
 #pragma region MODIFY DIR FILE FOR CREATE CHILD FILES
-
-	//read dir info about
-	uint32_t folderCount = 0, fileCount = 0;
-	std::vector<N_DirFileRecord> subFolderINT;//i-node number list
-	std::vector<N_DirFileRecord> subFilesINT;//i-node number list
-	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
 
 	//resize of current directory file
 	++folderCount;
@@ -449,15 +497,12 @@ bool IFileSystem::CreateFolder(std::string folderName)
 
 bool IFileSystem::DeleteFolder(std::string folderName)
 {
-	if (folderName.size() > 120)
-	{
-		DEBUG_MSG("FileSystem :Delete folder failed. folder name not exist. ");
-		return false;
-	}
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Deleting Folder:" + *m_pCurrentWorkingDir + folderName);
 
-	if (folderName.find('\\', 0) == std::string::npos || folderName.find('/', 0) == std::string::npos)
+	if (!mFunction_NameValidation(folderName))
 	{
-		DEBUG_MSG("FileSystem :Delete folder failed. Folder name not exist.  Character '\\' and '/' are not permitted in a NAME .");
+		ERROR_MSG("FileSystem :Delete folder failed.");
 		return false;
 	}
 
@@ -525,7 +570,7 @@ bool IFileSystem::DeleteFolder(std::string folderName)
 	return true;
 }
 
-void IFileSystem::EnumerateFilesAndDirs(NFileSystemEnumResult & outResult)
+void IFileSystem::EnumerateFilesAndDirs(N_FileSystemEnumResult & outResult)
 {
 	//read directory file
 	uint32_t folderCount = 0, fileCount = 0;
@@ -542,26 +587,58 @@ void IFileSystem::EnumerateFilesAndDirs(NFileSystemEnumResult & outResult)
 		//system files (like directory file are hidden from users)
 		if (pNode->ownerUserID != NOISE_FILE_OWNER_ROOT || pNode->ownerUserID != NOISE_FILE_OWNER_NULL)
 		{
-			outResult.fileList.push_back(*pNode);
+			N_FileEnumInfo fileInfo;
+			fileInfo.accessMode = pNode->accessMode;
+			fileInfo.address = pNode->address;
+			fileInfo.name = file.name;
+			fileInfo.ownerUserID = pNode->ownerUserID;
+			fileInfo.size = pNode->size;
+			outResult.fileList.push_back(fileInfo);
 		}
 	}
 }
 
 bool IFileSystem::CreateFile(std::string fileName, uint32_t byteSize, NOISE_FILE_ACCESS_MODE acMode)
 {
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Creating File:" + *m_pCurrentWorkingDir + fileName);
+
+	if (!mFunction_NameValidation(fileName))
+	{
+		ERROR_MSG("FileSystem :Create File failed.");
+		return false;
+	}
+
 	//new file space
 	uint32_t childFileAddr = m_pFileAddressAllocator->Allocate(byteSize);
-	uint32_t childFileINodeNum = m_pIndexNodeAllocator->Allocate(1);
-	if (childFileAddr == c_invalid_alloc_address)
+	if (childFileAddr == c_invalid_alloc_address || m_pFileAddressAllocator->GetFreeSpace()<sizeof(N_DirFileRecord))
 	{
 		ERROR_MSG("FileSystem :Create File failed.Not Enough space.");
 		return false;
 	}
 
-	if (childFileINodeNum == c_invalid_alloc_address)
+	uint32_t childFileINodeNum = m_pIndexNodeAllocator->Allocate(1);
+	if (childFileINodeNum == c_invalid_alloc_address )
 	{
+		m_pFileAddressAllocator->Release(childFileAddr, byteSize);//release file space for failing to create file
 		ERROR_MSG("FileSystem :Create File failed. Not Enough index nodes.");
 		return false;
+	}
+
+	//read dir info about
+	uint32_t folderCount = 0, fileCount = 0;
+	std::vector<N_DirFileRecord> subFolderINT;//i-node number list
+	std::vector<N_DirFileRecord> subFilesINT;//i-node number list
+	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
+
+	//CHECK repetition
+	for (auto& file : subFilesINT)
+	{
+		if (file.name == fileName)
+		{
+			ERROR_MSG("FileSystem :Create File failed. File Name already exist.");
+			return false;
+		}
 	}
 
 	//new INDEX NODE the file
@@ -573,13 +650,6 @@ bool IFileSystem::CreateFile(std::string fileName, uint32_t byteSize, NOISE_FILE
 	m_pIndexNodeList->at(childFileINodeNum) = newFileIndexNode;
 
 
-#pragma region MODIFY DIR FILE FOR CREATE CHILD FILES
-
-	//read dir info about
-	uint32_t folderCount = 0, fileCount = 0;
-	std::vector<N_DirFileRecord> subFolderINT;//i-node number list
-	std::vector<N_DirFileRecord> subFilesINT;//i-node number list
-	mFunction_ReadDirectoryFile(m_pCurrentDirIndexNode->address, folderCount, fileCount, subFolderINT, subFilesINT);
 
 	//resize of current directory file
 	++fileCount;
@@ -595,21 +665,17 @@ bool IFileSystem::CreateFile(std::string fileName, uint32_t byteSize, NOISE_FILE
 
 #pragma endregion
 
-
 	return true;
 }
 
 bool IFileSystem::DeleteFile(std::string fileName)
 {
-	if (fileName.size() > 120)
-	{
-		DEBUG_MSG("FileSystem :Delete file failed. file not exist. (file name too long)");
-		return false;
-	}
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Deleting File:" + *m_pCurrentWorkingDir + fileName);
 
-	if (fileName.find('\\', 0) == std::string::npos || fileName.find('/', 0) == std::string::npos)
+	if (!mFunction_NameValidation(fileName))
 	{
-		DEBUG_MSG("FileSystem :Delete file failed. file not exist. Character '\\' and '/' are not permitted in a NAME .");
+		ERROR_MSG("FileSystem :Delete file failed.");
 		return false;
 	}
 
@@ -621,7 +687,7 @@ bool IFileSystem::DeleteFile(std::string fileName)
 
 	//try to find target file
 	bool isFileFound = false;
-	for (auto pIter = subFolderINT.begin(); pIter != subFolderINT.end(); ++pIter)
+	for (auto pIter = subFilesINT.begin(); pIter != subFilesINT.end(); ++pIter)
 	{
 		//match existing child folder
 		if (fileName == pIter->name)
@@ -636,7 +702,7 @@ bool IFileSystem::DeleteFile(std::string fileName)
 			}
 
 			mFunction_ReleaseFileSpace(targetIndexNodeNum);
-			subFolderINT.erase(pIter);
+			subFilesINT.erase(pIter);
 			isFileFound = true;
 			break;
 		};
@@ -663,15 +729,12 @@ bool IFileSystem::DeleteFile(std::string fileName)
 
 IFile * IFileSystem::OpenFile(std::string fileName)
 {
-	if (fileName.size() > 120)
-	{
-		ERROR_MSG("FileSystem :Delete file failed. file not exist. (file name too long)");
-		return false;
-	}
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Opening File:" + *m_pCurrentWorkingDir + fileName);
 
-	if (fileName.find('\\', 0) == std::string::npos || fileName.find('/', 0) == std::string::npos)
+	if (!mFunction_NameValidation(fileName))
 	{
-		ERROR_MSG("FileSystem :Delete file failed. file not exist. Character '\\' and '/' are not permitted in a NAME .");
+		ERROR_MSG("FileSystem :Open file failed.");
 		return false;
 	}
 
@@ -695,12 +758,15 @@ IFile * IFileSystem::OpenFile(std::string fileName)
 				return false;
 			}
 
+
 			//create new file interface and init
 			IFile* pNewFile =IFactory<IFile>::CreateObject(fileName);
 			pNewFile->mFileIndexNodeNumber = targetIndexNodeNum;
 			pNewFile->m_pFileBuffer = &m_pVirtualDiskImage->at(mVDiskHeaderLength + pINode->address);
 			pNewFile->mFileSize = pINode->size;
 			pNewFile->mIsFileOpened = true;
+			pNewFile->mAccessMode_Write = pINode->accessMode & NOISE_FILE_ACCESS_MODE_OWNER_WRITE;
+			pNewFile->mAccessMode_Read = pINode->accessMode & NOISE_FILE_ACCESS_MODE_OWNER_READ;
 
 			return pNewFile;
 		};
@@ -712,6 +778,9 @@ IFile * IFileSystem::OpenFile(std::string fileName)
 
 bool IFileSystem::CloseFile(IFile * pFile)
 {
+	DEBUG_MSG("********************************");
+	DEBUG_MSG("Closing File : index number = "+pFile->mFileIndexNodeNumber);
+
 	pFile->mIsFileOpened = false;
 
 	N_IndexNode* pINode = &m_pIndexNodeList->at(pFile->mFileIndexNodeNumber);
@@ -763,7 +832,18 @@ inline void IFileSystem::mFunction_WriteData(uint32_t destOffset, T& srcData)
 
 bool IFileSystem::mFunction_NameValidation(const std::string & name)
 {
-	return false;
+	if (name.size() > 120)
+	{
+		ERROR_MSG("IFileSystem : the length of a name exceed max length! ");
+		return false;
+	}
+	
+	if (name.find('\\', 0) != std::string::npos || name.find('/', 0) != std::string::npos)
+	{
+		ERROR_MSG("IFileSystem :  Character '\\' and '/' are not permitted in a NAME .");
+		return false;
+	}
+	return true;
 }
 
 void IFileSystem::mFunction_ReadDirectoryFile(uint32_t dirFileAddress, uint32_t & outFolderCount, uint32_t & outFileCount, std::vector<N_DirFileRecord>& outChildFolders, std::vector<N_DirFileRecord>& outChildFiles)
@@ -822,8 +902,8 @@ bool IFileSystem::mFunction_RecursiveFolderDelete(uint32_t dirFileIndexNodeNum)
 		//if an opened file is found
 		if (pINode->isFileOpened)
 		{
-			DEBUG_MSG("FileSystem :Delete folder failed. a file under this folder is opened. Deletion procedure terminated.");
-			DEBUG_MSG("FileSystem :Opened file name:" << existingChildFiles.name);
+			DEBUG_MSG("IFileSystem :Delete folder failed. a file under this folder is opened. Deletion procedure terminated.");
+			DEBUG_MSG("IFileSystem :Opened file name:" << existingChildFiles.name);
 			return false;
 		}
 

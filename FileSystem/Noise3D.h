@@ -11,8 +11,10 @@ typedef std::string N_UID;
 typedef  std::string NFilePath;
 typedef unsigned int UINT;
 typedef int  BOOL;
-#define DEBUG_MSG(msg) std::cout<<msg<<std::endl;
-#define ERROR_MSG(msg) std::cout<<msg<<std::endl;
+
+extern std::ofstream* g_pLogFile;
+#define DEBUG_MSG(msg) *g_pLogFile<<msg<<std::endl;
+#define ERROR_MSG(msg) *g_pLogFile<<msg<<std::endl;
 #define TRUE 1
 #define FALSE 0
 

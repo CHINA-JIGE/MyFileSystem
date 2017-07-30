@@ -27,7 +27,7 @@
     <ClCompile Include="unitTest_Allocator.cpp">
       <Filter>UnitTest</Filter>
     </ClCompile>
-    <ClCompile Include="unitTest_directory.cpp">
+    <ClCompile Include="unitTest_FileSystem.cpp">
       <Filter>UnitTest</Filter>
     </ClCompile>
   </ItemGroup>
